@@ -1,11 +1,10 @@
-const fs = require('fs')
-const puppeteer = require('puppeteer')
-const path = require('path');
-const pLimit = require('p-limit');
-request = require('request');
-const axios = require('axios');
-
-const { Book, Chapter } = require('./book.js')
+import fs from 'fs';
+import puppeteer from 'puppeteer';
+import path from 'path';
+import pLimit from 'p-limit';
+import axios from 'axios';
+import { Book, Chapter } from './book.js';
+import { get } from 'http';
 
 const limit = pLimit.default ? pLimit.default(10) : pLimit(10); // limit to 10 concurrent downloads
 
@@ -64,7 +63,19 @@ async function downloadAllImages(chapterImageURLS, chapterFolder, chapter) {
     console.log(`chapter ${chapterFolder} downloads attempted.`);
 }
 
+async function getChapterURLS(myBook, browser) {
+    if (!myBook instanceof Book) {
+        console.error("Invalid chapters format in getChapterURLS function.");
+        return;
+    }
+    const chapterImageURLS = [];
 
+    const chapter = myBook.chapters[1];
+    const chapterImages = await getChapterImages(chapter.link, browser);
+    chapterImageURLS.push(chapterImages);
+
+    return chapterImageURLS;
+}
 
 async function download(myBook, browser) {
     if (!myBook instanceof Book) {
@@ -78,6 +89,7 @@ async function download(myBook, browser) {
         const safeTitle = chapter.title.replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, '_');
         const chapterFolder = `${safeTitle}`;
         const chapterImageURLS = await getChapterImages(chapter.link, browser);
+        console.log(chapterImageURLS);
         await downloadAllImages(chapterImageURLS, chapterFolder, chapter);
     }
 }
@@ -89,7 +101,7 @@ try {
         const browser = await puppeteer.launch({ headless: false, slowMo: 50 });
         const page = await browser.newPage()
 
-        await page.goto('https://weebcentral.com/series/01J76XY7F84AQF7DNFA0865TGQ/Nisekoi')
+        await page.goto('https://weebcentral.com/series/01JQEEGZBEX61ZXYPEJFVTEC4W/mrchen-crown')
 
 
         await page.click('button.hover\\:bg-base-300.p-2');
@@ -114,7 +126,10 @@ try {
         myBook.addChapters(chapterList);
         // myBook.display();
 
-        await download(myBook, browser);
+        let urls = await getChapterURLS(myBook, browser)
+        console.log(urls);
+
+        //await download(myBook, browser);
 
         /*
         if (fs.existsSync('images')) {
@@ -123,6 +138,7 @@ try {
         }
         await browser.close();
         */
+        console.log('All chapters downloaded successfully.');
     })()
 } catch (err) {
     console.error(err)

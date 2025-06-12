@@ -1,6 +1,7 @@
 {
   "name": "novel-writer",
   "version": "0.1.0",
+  "type": "module",
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
@@ -10,8 +11,10 @@
   },
   "dependencies": {
     "axios": "^1.9.0",
+    "epub-gen": "^0.1.0",
     "fs": "^0.0.1-security",
     "next": "15.3.2",
+    "nodemailer": "^7.0.3",
     "p-limit": "^6.2.0",
     "path": "^0.12.7",
     "puppeteer": "^24.10.0",

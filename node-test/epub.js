@@ -1,70 +1,181 @@
-const epub = require("epub-gen");
-var fs = require('fs');
-const path = require('path');
+import Epub from "epub-gen";
+import path from "path";
+import { fileURLToPath } from "url";
+import { Book, Chapter } from "./book.js";
+import fs from 'fs';
+import puppeteer from 'puppeteer';
 
-var book = require("./book.js")
+import pLimit from 'p-limit';
+import axios from 'axios';
 
-const { Book, Chapter } = require('./book.js')
+
+const limit = pLimit.default ? pLimit.default(10) : pLimit(10); // limit to 10 concurrent downloads
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+/*
 const myBook = new Book("Nisekoi", "Naoshi Komi");
 const chapters = [
-    new Chapter("Chapter 1", "https://weebcentral.com/series/01J76XY7F84AQF7DNFA0865TGQ/Nisekoi/1", ["img0.png", "img1.png", "img2.png"]),
-    new Chapter("Chapter 2", "https://weebcentral.com/series/01J76XY7F84AQF7DNFA0865TGQ/Nisekoi/2", ["img0.png", "img1.png", "img2.png"]),
+    new Chapter("Chapter_1", "https://weebcentral.com/series/01J76XY7F84AQF7DNFA0865TGQ/Nisekoi/1", ["img0.png", "img1.png", "img2.png"]),
+    new Chapter("Chapter_2", "https://weebcentral.com/series/01J76XY7F84AQF7DNFA0865TGQ/Nisekoi/2", ["img0.png", "img1.png", "img2.png"]),
 ];
 myBook.addChapters(chapters);
-myBook.addCover("google.png");
+myBook.addCover("images/chapter_229/img5.png");
 
-const title = myBook.title;
-const author = myBook.author;
-const cover = myBook.cover;
+// Use rawData for HTML content
+const content = myBook.chapters.map(chapter => ({
+    title: chapter.title,
+    data: chapter.imagePaths.map(img => {
+        // Use images/Chapter_1/img0.png as src
+        const tag = `<img src="${chapter.folder}/${img}" alt="${img}"/>`;
+        console.log(tag);
+        return tag;
+    }).join('\n')
+}));
+*/
 
-const chapterObj = myBook.chapters;
+async function downloadImages(url, filename, retries = 3) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+            const response = await axios.get(url, { responseType: 'stream', timeout: 20000 });
+            await new Promise((resolve, reject) => {
+                const stream = response.data.pipe(fs.createWriteStream(filename));
+                stream.on('finish', resolve);
+                stream.on('error', reject);
+            });
+            return;
+        } catch (err) {
+            console.error(`Error downloading ${url} (attempt ${attempt}): ${err.message}`);
+            if (attempt === retries) {
+                console.error(`Failed to download ${url} after ${retries} attempts.`);
+            } else {
+                await new Promise(res => setTimeout(res, 2000));
+            }
+        }
+    }
+}
 
-const content1 = myBook.chapters.map(chapter => {
-    return {
-        title: chapter.title,
-        data: `<h1>${chapter.title}</h1><p>Read <a href="${chapter.link}">here</a></p>` +
-            chapter.images.map(img => `<img src="images/${chapter.folder}/${img}" alt="${img}"/>`).join('')
-    };
-});
+async function getChapterImages(chapterUrl, browser) {
+    const page = await browser.newPage();
+    await page.goto(chapterUrl, { waitUntil: 'networkidle2' });
 
-const files = myBook.chapters.flatMap(chapter =>
-    chapter.images.map(img => `images/${chapter.folder}/${img}`)
-);
+    await page.waitForSelector('img');
 
-const options = {
-    title,
-    author,
-    cover,
-    content1,
-    files
+    const images = await page.evaluate(() => {
+        return Array.from(document.querySelectorAll('img')).map(img => img.src);
+    });
+
+    await page.close();
+    return images;
+}
+
+async function downloadAllImages(chapterImageURLS, chapterFolder, chapter) {
+    if (!fs.existsSync(`images/${chapterFolder}`)) fs.mkdirSync(`images/${chapterFolder}`);
+    const tasks = chapterImageURLS.map((url, i) => {
+        const ext = path.extname(new URL(url).pathname);
+        if (!ext) return null;
+
+        const filename = path.join(`images/${chapterFolder}`, `img${i}${ext}`);
+        chapter.addimage(`img${i}${ext}`);
+        return limit(() => downloadImages(url, filename));
+    });
+    await Promise.allSettled(tasks);
+    console.log(`chapter ${chapterFolder} downloads attempted.`);
+}
+
+async function getChapterURLS(myBook, browser) {
+    if (!myBook instanceof Book) {
+        console.error("Invalid chapters format in getChapterURLS function.");
+        return;
+    }
+    const chapterImageURLS = [];
+
+    const chapter = myBook.chapters[1];
+    const chapterImages = await getChapterImages(chapter.link, browser);
+    chapterImageURLS.push(chapterImages);
+
+    return chapterImageURLS;
+}
+
+async function download(myBook, browser) {
+    if (!myBook instanceof Book) {
+        console.error("Invalid chapters format in download function.");
+        return;
+    }
+    if (!fs.existsSync('images')) fs.mkdirSync('images');
+    for (let i = 0; i < myBook.chapters.length; i++) {
+        const chapter = myBook.chapters[i];
+
+        const safeTitle = chapter.title.replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, '_');
+        const chapterFolder = `${safeTitle}`;
+        const chapterImageURLS = await getChapterImages(chapter.link, browser);
+        console.log(chapterImageURLS);
+        await downloadAllImages(chapterImageURLS, chapterFolder, chapter);
+    }
+}
+
+try {
+    (async () => {
+        const browser = await puppeteer.launch({ headless: false, slowMo: 50 });
+        const page = await browser.newPage()
+
+        await page.goto('https://weebcentral.com/series/01JQEEGZBEX61ZXYPEJFVTEC4W/mrchen-crown')
+
+
+        await page.click('button.hover\\:bg-base-300.p-2');
+        await page.waitForSelector('button.hover\\:bg-base-300.p-2', { hidden: true });
+        console.log('loaded')
+
+        const elements = await page.$$('#chapter-list.flex.flex-col.mt-2.divide-y.divide-slate-500 > .flex.items-center');
+        console.log('Found ' + elements.length + ' elements');
+
+        const chapterObj = await Promise.all(elements.map(el =>
+            el.evaluate(node => {
+                const anchor = node.querySelector('a');
+                return {
+                    href: anchor ? anchor.href : null,
+                    text: node.querySelector('span.grow span')?.textContent.trim() ?? null
+                };
+            })
+        ));
+        console.log('Found ' + chapterObj.length + ' chapters');
+        const myBook = new Book('Nisekoi', 'Naoshi Komi');
+        const chapterList = chapterObj.map(ch => new Chapter(ch.text, ch.href));
+        myBook.addChapters(chapterList);
+        // myBook.display();
+
+        let urls = await getChapterURLS(myBook, browser)
+        console.log(urls);
+
+        await browser.close();
+
+        const flatUrls = urls.flat();
+        const content = [
+            {
+                title: 'Test Chapter',
+                data: flatUrls.filter(Boolean).map(imgUrl => `<img src="${imgUrl}" alt="image"/>`).join('\n')
+            }
+        ];
+
+        const options = {
+            title: 'Test Book',
+            author: 'Test Author',
+            cover: 'https://scans-hot.planeptune.us/manga/mrchen-crown/0009-005.png',
+            content,
+            verbose: true,
+            appendChapterTitles: false,
+            output: path.join(__dirname, "test-epubgen.epub"),
+        };
+
+        new Epub(options).promise.then(() => {
+            console.log("EPUB generated successfully with epub-gen!");
+        }).catch(err => {
+            console.error("EPUB generation failed:", err);
+        });
+    })()
+} catch (err) {
+    console.error(err)
 }
 
 
-const content = [
-    {
-        title: "Chaptasdawsdaer 1",
-        data: `
-      <h1>Chapter 1</h1>
-      <p>This is the first chapter.</p>
-      <img src="images/Chapter_1/img0.png" alt="img0"/>
-      <img src="images/Chapter_1/img1.png" alt="img1"/>
-      <img src="images/Chapter_1/img2.png" alt="img2"/>
-    `
-    }
-];
-
-const options1 = {
-    title: "Sample Book",
-    author: "Author Name",
-    cover: path.resolve(__dirname, "google.png"),
-    content,
-    files: [
-        path.resolve(__dirname, "images/Chapter_1/img0.png"),
-        path.resolve(__dirname, "images/Chapter_1/img1.png"),
-        path.resolve(__dirname, "images/Chapter_1/img2.png")
-
-    ]
-};
-
-new epub(options1, 'book.epub').promise;
 
