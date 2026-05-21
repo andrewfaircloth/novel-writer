@@ -2,12 +2,15 @@ class Chapter {
     constructor(title, link, images = []) {
         this.title = title.replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, '_');
         this.link = link;
-        this.folder = `node-test/images/${title.replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, '_')}`;
-        this.imagePaths = images;
+        this.images = [];
     }
 
-    addimage(imageName) {
-        this.imagePaths.push(`${this.folder}/${imageName}`);
+    addimages(imageList) {
+        this.images = [...imageList];
+    }
+
+    addimage(image) {
+        this.images.push(image);
     }
 
     print() {

@@ -183,3 +183,5 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+node-test/token.json
+node-test/credentials.json
